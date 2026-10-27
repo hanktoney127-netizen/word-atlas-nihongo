@@ -11,7 +11,7 @@ export function stopAudio() {
 }
 
 /** Play a recording, falling back to the device voice. Resolves when playback ends. */
-export async function play(url: string | null | undefined, text: string, accent: "uk" | "us" = "uk", rate = 1) {
+export async function play(url: string | null | undefined, text: string, accent: "uk" | "us" | "ja" = "uk", rate = 1) {
   duck(true);
   try {
     return await speak(url, text, accent, rate);
@@ -20,7 +20,7 @@ export async function play(url: string | null | undefined, text: string, accent:
   }
 }
 
-async function speak(url: string | null | undefined, text: string, accent: "uk" | "us", rate: number) {
+async function speak(url: string | null | undefined, text: string, accent: "uk" | "us" | "ja", rate: number) {
   stopAudio();
   const mine = ++token;
   if (url) {
@@ -41,15 +41,14 @@ async function speak(url: string | null | undefined, text: string, accent: "uk" 
   }
   if (!("speechSynthesis" in window)) return "unsupported" as const;
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = accent === "uk" ? "en-GB" : "en-US";
+  u.lang = accent === "ja" ? "ja-JP" : accent === "uk" ? "en-GB" : "en-US";
   u.rate = rate * 0.95;
   const voices = speechSynthesis.getVoices().filter((v) => v.lang.replace("_", "-") === u.lang);
   const best = voices.find((v) => /premium|enhanced|natural|google/i.test(v.name)) || voices[0];
   if (best) u.voice = best;
-  await new Promise<void>((r) => {
-    u.onend = () => r();
-    u.onerror = () => r();
+  return await new Promise<"device" | "failed">((resolve) => {
+    u.onend = () => resolve("device");
+    u.onerror = () => resolve("failed");
     speechSynthesis.speak(u);
   });
-  return "device" as const;
 }

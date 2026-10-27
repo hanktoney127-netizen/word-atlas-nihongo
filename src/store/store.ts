@@ -6,6 +6,7 @@ export type QuizKind = "meaning" | "picture" | "listen" | "spell";
 export type Step = { id: string; kind: "intro" } | { id: string; kind: QuizKind; retry?: boolean; options?: string[] };
 
 export interface ActiveSession {
+  mode?: "scene";
   id: string;
   started: number;
   steps: Step[];
@@ -47,6 +48,8 @@ export interface Progress {
 }
 
 export interface Settings {
+  hideMotherTongue: boolean;
+  showFurigana: boolean;
   accent: Accent;
   autoplay: boolean;
   dailyNew: number;
@@ -63,6 +66,8 @@ export interface Settings {
 }
 
 export const defaultSettings: Settings = {
+  hideMotherTongue: false,
+  showFurigana: true,
   accent: "uk",
   autoplay: true,
   dailyNew: 10,
@@ -160,6 +165,8 @@ export function sanitizeProgress(v: unknown, datasetId: string): Progress {
 export function sanitizeSettings(v: unknown): Settings {
   const s = { ...defaultSettings };
   if (!isObj(v)) return s;
+  if (typeof v.hideMotherTongue === "boolean") s.hideMotherTongue = v.hideMotherTongue;
+  if (typeof v.showFurigana === "boolean") s.showFurigana = v.showFurigana;
   if (v.accent === "uk" || v.accent === "us") s.accent = v.accent;
   if (typeof v.autoplay === "boolean") s.autoplay = v.autoplay;
   if (num(v.dailyNew, 0, 100)) s.dailyNew = Math.round(v.dailyNew as number);
