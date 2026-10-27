@@ -37,18 +37,6 @@ export function todayPlan(atlas: Atlas, p: Progress, s: Settings) {
   return { due, fresh, minutes: Math.max(1, Math.round(due.length * 0.25 + fresh.length * 0.9)) };
 }
 
-function quizKind(ref: WordRef, p: Progress, s: Settings, salt: number): QuizKind {
-  const c = p.cards[ref.id];
-  const hasImg = !!(ref.media & MEDIA.img);
-  const roll = hashSeed(ref.id + salt) % 100;
-  if (!c || c.s < 2) {
-    if (hasImg && roll < 45) return "picture";
-    return roll < 80 ? "meaning" : "listen";
-  }
-  if (s.spell && (c.s >= 4 || roll < 35)) return roll < 75 ? "spell" : hasImg ? "picture" : "listen";
-  return roll < 50 ? "listen" : hasImg ? "picture" : "meaning";
-}
-
 /** Distractors that look plausible: same level, similar spelling or length, different meaning. */
 export function distractors(atlas: Atlas, ref: WordRef, kind: QuizKind, seed: number) {
   const target = normalize(ref.word);
@@ -88,21 +76,10 @@ export function buildSession(atlas: Atlas, p: Progress, s: Settings, opts?: { id
   const plan = todayPlan(atlas, p, s);
   const reviewIds = opts?.ids ? opts.ids.filter((id) => p.cards[id]) : plan.due.slice(0, 120);
   const newIds = opts?.ids ? opts.ids.filter((id) => !p.cards[id]) : opts?.reviewOnly ? [] : plan.fresh;
-  const steps: Step[] = [];
-  const quiz = (id: string, salt: number): Step => {
-    const ref = atlas.byId.get(id)!;
-    const kind = quizKind(ref, p, s, seed + salt);
-    return { id, kind, options: kind === "spell" ? undefined : distractors(atlas, ref, kind, seed + salt) };
-  };
-  // Reviews first while attention is fresh, then new words in small groups:
-  // meet five, then recall those five in a different order.
-  reviewIds.forEach((id, i) => steps.push(quiz(id, i)));
-  for (let g = 0; g < newIds.length; g += 5) {
-    const group = newIds.slice(g, g + 5);
-    group.forEach((id) => steps.push({ id, kind: "intro" }));
-    shuffle(group, seed + g).forEach((id, i) => steps.push(quiz(id, 1000 + g + i)));
-  }
-  return { id: `s${seed}`, started: seed, steps, index: 0, graded: {}, newIds, reviewIds };
+  // One scene per target. Nothing is revealed or graded until the learner acts.
+  const ids = [...new Set([...reviewIds, ...newIds])].filter((id) => atlas.byId.has(id));
+  const steps: Step[] = ids.map((id) => ({ id, kind: "picture" }));
+  return { mode: "scene", id: `s${seed}`, started: seed, steps, index: 0, graded: {}, newIds, reviewIds };
 }
 
 export function gradeFor(kind: QuizKind, correct: boolean, ms: number, hinted: boolean): Grade {
@@ -167,3 +144,33 @@ export function sessionStats(s: ActiveSession) {
 }
 
 export const masteredCount = (p: Progress) => Object.values(p.cards).filter(isMastered).length;
+
+/** Migrate an unfinished legacy intro/quiz session without re-grading completed words. */
+export function sceneSession(atlas: Atlas, p: Progress, s: Settings): ActiveSession {
+  const old = p.session;
+  if (!old) return buildSession(atlas, p, s);
+  if (old.mode === "scene" || old.finished) return old;
+  const ids = [...new Set(old.steps.slice(old.index).map((step) => step.id))]
+    .filter((id) => atlas.byId.has(id) && !(id in old.graded));
+  const steps: Step[] = ids.map((id) => ({ id, kind: "picture" }));
+  return { ...old, mode: "scene", steps, index: 0, pending: undefined,
+    finished: steps.length ? undefined : Date.now() };
+}
+
+/** Self-rating and advancing are one transaction, guarded against stale/double clicks. */
+export function rateScene(p: Progress, sessionId: string, index: number, grade: Grade,
+  seconds: number, retention: number, now = Date.now()): Progress {
+  const s = p.session;
+  if (!s || s.mode !== "scene" || s.id !== sessionId || s.index !== index || s.finished) return p;
+  const step = s.steps[index];
+  if (!step || step.id in s.graded) return p;
+  const nextIndex = index + 1;
+  const next = bumpDay(p, { r: 1, c: grade === Rating.Again ? 0 : 1,
+    n: p.cards[step.id] ? 0 : 1, t: Math.max(0, Math.min(90, Math.round(seconds))) });
+  return { ...next,
+    cards: { ...next.cards, [step.id]: review(p.cards[step.id], grade, now, retention) },
+    mistakes: grade === Rating.Again
+      ? [step.id, ...p.mistakes.filter((id) => id !== step.id)].slice(0, 300) : p.mistakes,
+    session: { ...s, graded: { ...s.graded, [step.id]: grade }, index: nextIndex,
+      pending: undefined, finished: nextIndex >= s.steps.length ? now : undefined } };
+}

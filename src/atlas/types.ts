@@ -12,6 +12,9 @@ export interface Sense {
 export interface Example {
   en: string;
   zh: string;
+  /** Explicit cloze spans and furigana. `en` retains its legacy name for compatibility. */
+  parts?: { text: string; reading?: string; blank?: boolean }[];
+  lang?: "en" | "ja";
 }
 
 export interface Entry {
